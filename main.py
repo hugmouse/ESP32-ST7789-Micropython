@@ -7,7 +7,7 @@ res_pin = YOUR
 dc_pin = PINS
 
 # SPI initialization
-spi = machine.SPI(2, baudrate=10000000, sck=machine.Pin(scl_pin), mosi=machine.Pin(sda_pin),
+spi = machine.SPI(2, baudrate=26600000, sck=machine.Pin(scl_pin), mosi=machine.Pin(sda_pin),
                   miso=None, polarity=1, phase=1)
 
 # GPIO pins for RES and DC initialized as output
@@ -47,14 +47,14 @@ def init_display():
     Initializes the display.
     """
     reset_display()
-    send_command(0x11)                                    # Sleep out
+    send_command(0x11)                      # Sleep out
     utime.sleep_ms(120)
-    send_command(0x20)                                    # Display inversion off
+    send_command(0x20)                      # Display inversion off
     send_command(0xB3, [0x01, 0x00, 0x00])  # Frame rate control
     send_command(0xC0, [0x0c])              # LCM Control
     send_command(0x36, [0x00])              # Memory Data Access Control
     send_command(0x3A, [0x55])              # Interface Pixel Format
-    send_command(0x29)                                    # Display ON
+    send_command(0x29)                      # Display ON
 
 
 def fill_color_chunked_optimized(color):
@@ -65,28 +65,17 @@ def fill_color_chunked_optimized(color):
     """
     width, height = 240, 240
     total_pixels = width * height
-    chunk_size = 4096
-    bytes_per_pixel = 2
-    buf_size = chunk_size * bytes_per_pixel * 2
-    buf = bytearray(buf_size)
+    chunk_size = 4800
     color_high, color_low = color >> 8, color & 0xFF
+    buf = bytearray([color_high, color_low] * chunk_size)
 
-    for i in range(0, len(buf), 2):
-        buf[i], buf[i + 1] = color_high, color_low
+    # Set column and row address just once for the whole screen
+    send_command(0x2A, [0x00, 0x00, 0x00, 0xEF])
+    send_command(0x2B, [0x00, 0x00, 0x00, 0xEF])
+    send_command(0x2C)  # Start frame memory write
 
-    send_command(0x2A, [0x00, 0x00, 0x00, 0xEF])  # Set column address
-    send_command(0x2B, [0x00, 0x00, 0x00, 0xEF])  # Set row address
-    send_command(0x2C)  # Write memory start
+    dc.value(1)
+    for _ in range(total_pixels // chunk_size):
+        spi.write(memoryview(buf))
 
-    chunks = total_pixels // chunk_size
-    chunk_bytes = chunk_size * bytes_per_pixel
-    mv = memoryview(buf)
-    chunk_data = mv[:chunk_bytes]
-    dc.value(1)  # Data mode
-    for _ in range(chunks):
-        spi.write(chunk_data)
-
-    remainder = total_pixels % chunk_size
-    if remainder > 0:
-        spi.write(mv[:remainder * bytes_per_pixel])
-    dc.value(0)  # Command mode
+    dc.value(0)
